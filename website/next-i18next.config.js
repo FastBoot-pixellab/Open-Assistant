@@ -29,6 +29,7 @@ module.exports = {
       "vi",
       "zh",
       "th",
+      "kk",
       "tr",
     ],
   },
