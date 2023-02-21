@@ -3,6 +3,7 @@ module.exports = {
     defaultLocale: "en",
     locales: [
       "ar",
+      "bg",
       "bn",
       "ca",
       "cs",
@@ -18,7 +19,9 @@ module.exports = {
       "hu",
       "id",
       "it",
+      "ja",
       "ko",
+      "nb-NO",
       "nl",
       "pl",
       "pt-BR",

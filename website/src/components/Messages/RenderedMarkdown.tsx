@@ -42,10 +42,13 @@ const sx: SystemStyleObject = {
   },
   "p:only-child": {
     my: 0, // ovoid margin when markdown only render 1 p tag
-    mt: { base: 1.5, md: 0 },
   },
   p: {
     whiteSpace: "pre-wrap",
+    mb: 4,
+    fontSize: "md",
+    fontWeight: "normal",
+    lineHeight: 6,
   },
   wordBreak: "break-word",
   "> blockquote": {
@@ -70,6 +73,8 @@ const sx: SystemStyleObject = {
 };
 
 const plugins = [remarkGfm];
+
+const disallowedElements = ["img"];
 
 // eslint-disable-next-line react/display-name
 const RenderedMarkdown = ({ markdown }: RenderedMarkdownProps) => {
@@ -157,7 +162,7 @@ const RenderedMarkdown = ({ markdown }: RenderedMarkdownProps) => {
 const MemorizedMarkdown = memo((props: ReactMarkdownOptions) => {
   return (
     <Prose as="div" sx={sx}>
-      <ReactMarkdown remarkPlugins={plugins} {...props}></ReactMarkdown>
+      <ReactMarkdown {...props} disallowedElements={disallowedElements} remarkPlugins={plugins}></ReactMarkdown>
     </Prose>
   );
 });

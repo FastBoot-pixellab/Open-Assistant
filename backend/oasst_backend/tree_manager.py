@@ -120,6 +120,33 @@ class TreeManagerStats(pydantic.BaseModel):
     message_counts: list[TreeMessageCountStats]
 
 
+def halt_prompts_of_disabled_users(db: Session):
+    _sql_halt_prompts_of_disabled_users = """
+-- remove prompts of disabled & deleted users from prompt lottery
+WITH cte AS (
+SELECT mts.message_tree_id
+FROM message_tree_state mts
+JOIN message m ON mts.message_tree_id = m.id
+JOIN "user" u ON m.user_id = u.id
+WHERE state = :prompt_lottery_waiting_state AND (NOT u.enabled OR u.deleted)
+)
+UPDATE message_tree_state mts2
+SET active=false, state=:halted_by_moderator_state
+FROM cte
+WHERE mts2.message_tree_id = cte.message_tree_id;
+"""
+
+    r = db.execute(
+        text(_sql_halt_prompts_of_disabled_users),
+        {
+            "prompt_lottery_waiting_state": message_tree_state.State.PROMPT_LOTTERY_WAITING,
+            "halted_by_moderator_state": message_tree_state.State.HALTED_BY_MODERATOR,
+        },
+    )
+    if r.rowcount > 0:
+        logger.info(f"Halted {r.rowcount} prompts of disabled users.")
+
+
 class TreeManager:
     def __init__(
         self,
@@ -166,7 +193,7 @@ class TreeManager:
             task_weights[TaskType.REPLY.value] = 2
 
         if num_missing_prompts > 0:
-            task_weights[TaskType.PROMPT.value] = 1
+            task_weights[TaskType.PROMPT.value] = 0.01
 
         task_weights = np.array(task_weights)
         weight_sum = task_weights.sum()
@@ -240,16 +267,20 @@ class TreeManager:
 
             @managed_tx_function(CommitMode.COMMIT)
             def activate_one(db: Session) -> int:
+
                 # select among distinct users
                 authors_qry = (
                     db.query(Message.user_id)
                     .select_from(MessageTreeState)
                     .join(Message, MessageTreeState.message_tree_id == Message.id)
+                    .join(User, Message.user_id == User.id)
                     .filter(
                         MessageTreeState.state == message_tree_state.State.PROMPT_LOTTERY_WAITING,
                         Message.lang == lang,
                         not_(Message.deleted),
                         Message.review_result,
+                        User.enabled,
+                        not_(User.deleted),
                     )
                     .distinct(Message.user_id)
                 )
@@ -764,8 +795,9 @@ class TreeManager:
                                     f"Initial prompt message was accepted: {msg.id=}, {acceptance_score=}, {len(reviews)=}"
                                 )
                             else:
-                                msg.review_result = False
-                                self.db.add(msg)
+                                if msg.review_result is None:
+                                    msg.review_result = False
+                                    self.db.add(msg)
                                 self.enter_low_grade_state(msg.message_tree_id)
                         self.check_condition_for_prompt_lottery(msg.message_tree_id)
                     elif msg.review_count >= self.cfg.num_reviews_reply:
@@ -775,7 +807,7 @@ class TreeManager:
                             logger.info(
                                 f"Reply message message accepted: {msg.id=}, {acceptance_score=}, {len(reviews)=}"
                             )
-                        else:
+                        elif msg.review_result is None:  # do not overwrite existing review result
                             msg.review_result = False
                             self.db.add(msg)
 
@@ -1308,6 +1340,8 @@ LEFT JOIN message_reaction mr ON mr.task_id = t.id AND mr.payload_type = 'Rankin
                 state = message_tree_state.State.GROWING
                 logger.info(f"Inserting missing message tree state for message: {id} ({tree_size=}, {state=:s})")
             self._insert_default_state(id, state=state)
+
+        halt_prompts_of_disabled_users(self.db)
 
         # check tree state transitions (maybe variables haves changes): prompt review -> growing -> ranking -> scoring
         prompt_review_trees: list[MessageTreeState] = (
